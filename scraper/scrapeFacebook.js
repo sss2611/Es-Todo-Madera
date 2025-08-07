@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer');
+const fs = require('fs');
 require('dotenv').config();
 
 async function scrapeFacebookPage() {
@@ -9,26 +10,29 @@ async function scrapeFacebookPage() {
   await page.goto(url, { waitUntil: 'networkidle2' });
   await page.waitForSelector('[role="main"]');
 
-  // Scroll infinito simulado
-  let previousHeight = 0;
-  let scrollAttempts = 0;
-  const maxScrolls = 10;
+  // 🔁 Scroll extendido
+  let previousHeight;
+  let scrollTries = 0;
+  const maxTries = 20;
 
-  while (scrollAttempts < maxScrolls) {
-    scrollAttempts++;
-    const newHeight = await page.evaluate(() => {
-      window.scrollBy(0, window.innerHeight);
-      return document.body.scrollHeight;
-    });
-
-    if (newHeight === previousHeight) break;
-    previousHeight = newHeight;
+  while (scrollTries < maxTries) {
+    previousHeight = await page.evaluate('document.body.scrollHeight');
+    await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
     await new Promise(resolve => setTimeout(resolve, 2000));
+
+    const newHeight = await page.evaluate('document.body.scrollHeight');
+    if (newHeight === previousHeight) break;
+
+    scrollTries++;
   }
 
-  // Extraer posts
+  // 🧰 Guardar HTML para debug (opcional)
+  const html = await page.content();
+  fs.writeFileSync('paginaFacebook.html', html);
+
+  // 🔍 Extraer posts
   const content = await page.evaluate(() => {
-    const posts = Array.from(document.querySelectorAll('[role="article"]'))
+    const posts = Array.from(document.querySelectorAll('[role="article"], div[data-pagelet^="FeedUnit_"]'))
       .filter(post => post.innerText.trim().length > 0);
 
     return posts.map(post => {
@@ -38,36 +42,23 @@ async function scrapeFacebookPage() {
         .map(a => a.href)
         .find(href => href.includes('facebook.com/share')) || '';
 
-      const priceMatch = text.match(/\$\s?\d{2,3}(?:[.,]\d{3})?(?:[.,]\d{2})?/);
-      const precio = priceMatch ? priceMatch[0].replace(/\s/g, '') : null;
-
-      const nombreProducto = text
-        .split('\n')
-        .filter(line =>
-          !line.includes('Me gusta') &&
-          !line.includes('Comentar') &&
-          !line.includes('Compartir') &&
-          !line.includes('ha publicado') &&
-          !line.match(/\d{1,2}\s[h|d|min]/)
-        )
-        .join(' ')
-        .trim();
-
       const imagenes = Array.from(post.querySelectorAll('img'))
         .map(img => img.src)
         .filter(src => src && src.startsWith('http'));
 
       return {
-        nombreProducto,
-        precio,
-        link,
+        textoOriginal: text,
         imagenes,
-        textoOriginal: text
+        link
       };
     });
   });
 
   await browser.close();
+
+  // 🧪 Log de cantidad de posts
+  console.log(`✅ Posts encontrados: ${content.length}`);
+
   return content;
 }
 
